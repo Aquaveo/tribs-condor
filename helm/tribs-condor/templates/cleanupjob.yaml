@@ -1,0 +1,30 @@
+# Deletes all the configmaps and pods created by the scheduler
+# Basically it cleans the dynamically resources that were created outside the chart
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cleanup-job
+  labels:
+    app.kubernetes.io/name: condor-cleaner-job
+    helm.sh/chart: {{ include "condor-manager.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      serviceAccountName: default  # Ensure this matches your RoleBinding
+      containers:
+        - name: cleanup
+          image: bitnami/kubectl:latest
+          command:
+            - sh
+            - -c
+            - |
+              # Add your cleanup commands here
+              kubectl delete configmap condor-scheduler-name -n {{ .Release.Namespace }}
+              kubectl delete pod -l app=condor-worker -n {{ .Release.Namespace }}
+      restartPolicy: Never

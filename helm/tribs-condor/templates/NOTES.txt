@@ -1,0 +1,10 @@
+{{ .Chart.Name }} has been installed as release '{{ .Release.Name }}'.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }}
+  $ helm get {{ .Release.Name }}
+
+In order for {{ .Chart.Name }} to function, you must create the following secrets in the same namespace
+- condor-pool-password: A file named `password` that contains the condor pool password 
+- condor-authorized-keys: A file named `authorized_keys` that contains the public keys which should be allowed to ssh in.

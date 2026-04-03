@@ -1,0 +1,8 @@
+[submodule "tethysext-atcore"]
+	path = tethysext-atcore
+	url = https://github.com/Aquaveo/tethysext-atcore.git
+	branch = master
+[submodule "tribs-adapter"]
+	path = tribs-adapter
+	url = ../tribs-adapter
+	branch = main

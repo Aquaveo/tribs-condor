@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: condor-collector
+  labels:
+    app.kubernetes.io/name: condor-collector
+    helm.sh/chart: {{ include "condor-manager.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.collector.service.type }} 
+  # {{ .Values.service.type }}
+  ports:
+{{- range .Values.collector.service.ports }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      protocol: {{ .protocol }}
+{{- end }}
+    # - port: {{ .Values.service.port }}
+    #   targetPort: 9618
+    #   protocol: TCP
+    #   name: condor
+  selector:
+    app.kubernetes.io/name: condor-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}

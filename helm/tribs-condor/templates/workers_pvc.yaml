@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.worker.persistentVolumeClaim.name }}
+  labels:      
+    app: condor-worker
+spec:
+  accessModes:
+  {{- range .Values.worker.persistentVolumeClaim.accessModes }}
+    - {{ . | quote }}
+  {{- end }}
+  {{- if .Values.worker.storageClass.enabled }}
+  storageClassName: {{ .Values.worker.storageClass.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.storageClass.workspace_size | quote }}

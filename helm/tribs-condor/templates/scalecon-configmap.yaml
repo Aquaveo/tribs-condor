@@ -1,0 +1,373 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: condor-worker-json
+data:
+  worker.json: |
+    {
+      "kind": "Pod",
+      "apiVersion": "v1",
+      "metadata": {
+        "generateName": "condor-worker",
+        "namespace": "{{ .Release.Namespace }}",
+        "labels": {
+          "app": "condor-worker"
+        }
+      },
+      "spec": {
+        {{- if .Values.worker.imagePullSecrets }}
+        "imagePullSecrets": {{ toJson .Values.worker.imagePullSecrets }},
+        {{- end }}
+        "volumes": [
+          {
+            "name": "pool-password",
+            "secret": {
+              "secretName": "condor-pool-password",
+              "defaultMode": 384
+            }
+          },
+          {
+            "name": "dedicated-scheduler-config",
+            "configMap": {
+              "name": "condor-scheduler-name"
+            }
+          },
+          {
+            "name": "condor-fdb-root",
+            "persistentVolumeClaim": {
+              "claimName": "{{ .Values.worker.persistentVolumeClaim.name }}"
+            }
+          }
+        ],
+        "containers": [
+          {
+            "name": "condor-worker",
+            "image": "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}",
+            "lifecycle":{
+              "preStop":{
+                "exec":{
+                  "command": ["condor_off"]
+                }
+              }
+            },
+            "env": [
+              {
+                "name": "_CONDOR_CONDOR_HOST",
+                "value": "condor-collector"
+              },
+              {
+                "name": "_CONDOR_SEC_PASSWORD_FILE",
+                "value": "/etc/condor/pool_password/password"
+              }
+            ],
+            "resources": {
+              "limits": {
+                "memory": "{{ .Values.worker.resources.limits.memory }}",
+                "cpu": "{{ .Values.worker.resources.limits.cpu }}"
+              },
+              "requests": {
+                "cpu": "{{ .Values.worker.resources.requests.cpu }}",
+                "memory": "{{ .Values.worker.resources.requests.memory }}"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "pool-password",
+                "mountPath": "/etc/condor/pool_password"
+              },
+              {
+                "name": "dedicated-scheduler-config",
+                "mountPath": "/etc/condor/config.d/20-dedicated-scheduler.conf",
+                "subPath": "dedicated-scheduler.conf"
+              },
+              {
+                "name": "condor-fdb-root",
+                "mountPath": "{{ .Values.worker.condor_fdb_root.mountPath }}"
+              }
+            ],
+            "imagePullPolicy": "{{ .Values.worker.image.pullPolicy }}"
+          }
+        ],
+        {{- if .Values.worker.nodeSelector }}
+        "nodeSelector": {{ toJson .Values.worker.nodeSelector }},
+        {{- end }}
+        {{- if .Values.worker.affinity }}
+        "affinity": {{ toJson .Values.worker.affinity }},
+        {{- end }}
+        {{- if .Values.worker.tolerations }}
+        "tolerations": {{ toJson .Values.worker.tolerations }},
+        {{- end }}
+        "restartPolicy": "Never"
+      }
+    }
+  main.py: |
+    #!/usr/bin/python
+
+    import htcondor
+    import json
+    import os
+    import requests
+    import time
+    import datetime
+    import math
+
+    APISERVER = "https://kubernetes.default.svc"
+    SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+    TOKEN = open(f"{SA_DIR}/token", "r").read().strip()
+    NAMESPACE = open(f"{SA_DIR}/namespace", "r").read().strip()
+    CACERT = f"{SA_DIR}/ca.crt"
+
+    IDLE_TIMESTAMP_ANNOTATION = "htcondor/idle_since"
+    IDLE_THRESHOLD_SECONDS = 3600  # 1 hour
+
+
+    def get_needed_cpus():
+        coll = htcondor.Collector()
+        results = coll.query(htcondor.AdTypes.Schedd, "true", ["Name"])
+        needed_cpus = 0
+        for result in results:
+            host = result["Name"]
+            schedd_ad = coll.locate(htcondor.DaemonTypes.Schedd, host)
+            schedd = htcondor.Schedd(schedd_ad)
+            jobs = schedd.query("", ["JobStatus", "RequestCpus"])
+            for job in jobs:
+                if job["JobStatus"] == 1:  # Job status 1 is idle
+                    needed_cpus += int(job["RequestCpus"])
+        return needed_cpus
+
+
+    def get_num_pods(label_selector):
+        try:
+            r = requests.get(
+                f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods?labelSelector={label_selector}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+                verify=CACERT,
+            )
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to get list of pods: {e}")
+            exit(1)
+        pods_pending = 0
+        pods_running = 0
+        if "items" in r.json() and r.json()["items"] is not None:
+            for pod in r.json()["items"]:
+                phase = pod["status"]["phase"]
+                print(f"Pod {pod['metadata']['name']} is in phase {phase}")
+                if phase == "Running":
+                    pods_running += 1
+                elif phase == "Pending":
+                    pods_pending += 1
+        else:
+            print("No pods found with the given label selector.")
+        return pods_pending, pods_running
+
+
+    # Check if the Machine or pod is was not claimed by the scheduler.
+    # more here: https://htcondor.readthedocs.io/en/latest/classad-attributes/machine-classad-attributes.html#State
+    def is_pod_idle(pod_name):
+        coll = htcondor.Collector()
+        startd_ads = coll.query(
+            htcondor.AdTypes.Startd, f'Machine == "{pod_name}"', ["State"]
+        )
+        if not startd_ads:
+            print(f"No startd ad found for pod {pod_name}. Assuming idle.")
+            return True  # If no ad found, consider it idle
+        state = startd_ads[0]["State"]
+        print(f"Pod {pod_name} has HTCondor state {state}")
+        if state == "Unclaimed":
+            return True
+        else:
+            return False
+
+
+    # Terminate any pod that has not been claimed or matched in time range of 1 hour
+    def terminate_idle_pods(label_selector):
+        try:
+            r = requests.get(
+                f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods?labelSelector={label_selector}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+                verify=CACERT,
+            )
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to get list of pods: {e}")
+            exit(1)
+        pods = r.json().get("items", [])
+        for pod in pods:
+            pod_name = pod["metadata"]["name"]
+            pod_phase = pod["status"]["phase"]
+            annotations = pod["metadata"].get("annotations", {})
+            if pod_phase != "Running":
+                continue  # Skip pods that are not running
+            # Check if the pod is idle
+            if is_pod_idle(pod_name):
+                idle_since = annotations.get(IDLE_TIMESTAMP_ANNOTATION)
+                current_time = int(time.time())
+                if not idle_since:
+                    # Pod just became idle; annotate with current timestamp
+                    set_pod_annotation(
+                        pod_name, IDLE_TIMESTAMP_ANNOTATION, str(current_time)
+                    )
+                    print(
+                        f"Pod {pod_name} is idle. Annotated with idle timestamp {current_time}."
+                    )
+                else:
+                    idle_duration = current_time - int(idle_since)
+                    if idle_duration >= IDLE_THRESHOLD_SECONDS:
+                        # Pod has been idle for over 1 hour; terminate it
+                        print(
+                            f"Pod {pod_name} has been idle for {idle_duration} seconds. Terminating."
+                        )
+                        delete_pod(pod_name)
+            else:
+                # Pod is not idle; remove idle annotation if it exists
+                if IDLE_TIMESTAMP_ANNOTATION in annotations:
+                    remove_pod_annotation(pod_name, IDLE_TIMESTAMP_ANNOTATION)
+                    print(
+                        f"Pod {pod_name} is running a job. Removed idle timestamp annotation."
+                    )
+
+
+    # set the pod annotation to know that it is idle
+    def set_pod_annotation(pod_name, key, value):
+        patch = {"metadata": {"annotations": {key: value}}}
+        try:
+            r = requests.patch(
+                f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods/{pod_name}",
+                headers={
+                    "Authorization": f"Bearer {TOKEN}",
+                    "Content-Type": "application/merge-patch+json",
+                },
+                data=json.dumps(patch),
+                verify=CACERT,
+            )
+            if r.status_code in [200, 202]:
+                print(f"Successfully set annotation {key}={value} on pod {pod_name}")
+            else:
+                print(
+                    f"Failed to set annotation on pod {pod_name}: {r.status_code} {r.text}"
+                )
+        except requests.exceptions.RequestException as e:
+            print(f"Exception while setting annotation on pod {pod_name}: {e}")
+
+
+    # remote the pod annotation to know that the pod is currently running a job, so it is in a Claimed status
+    def remove_pod_annotation(pod_name, key):
+        patch = {"metadata": {"annotations": {key: None}}}
+        try:
+            r = requests.patch(
+                f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods/{pod_name}",
+                headers={
+                    "Authorization": f"Bearer {TOKEN}",
+                    "Content-Type": "application/merge-patch+json",
+                },
+                data=json.dumps(patch),
+                verify=CACERT,
+            )
+            if r.status_code in [200, 202]:
+                print(f"Successfully removed annotation {key} from pod {pod_name}")
+            else:
+                print(
+                    f"Failed to remove annotation from pod {pod_name}: {r.status_code} {r.text}"
+                )
+        except requests.exceptions.RequestException as e:
+            print(f"Exception while removing annotation from pod {pod_name}: {e}")
+
+
+    # delete the pod that is not running any job and is idle for more than 1 hour
+    def delete_pod(pod_name):
+        try:
+            r = requests.delete(
+                f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods/{pod_name}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+                verify=CACERT,
+            )
+            if r.status_code in [200, 202, 204]:
+                print(f"Successfully deleted pod {pod_name}")
+            else:
+                print(f"Failed to delete pod {pod_name}: {r.status_code} {r.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"Exception while deleting pod {pod_name}: {e}")
+
+
+    # create pods as needed to run the jobs
+    def create_pods(num, template, name, label_selector):
+        print("Creating", num, "pods")
+        try:
+            with open(template, "r") as content:
+                raw = content.read()
+        except Exception as e:
+            print(f"Failed to open pod template: {e}")
+            exit(1)
+        for i in range(num):
+            pod = json.loads(raw)
+            pod["metadata"]["generateName"] = name + "-"
+            try:
+                r = requests.post(
+                    f"{APISERVER}/api/v1/namespaces/{NAMESPACE}/pods?labelSelector={label_selector}",
+                    data=json.dumps(pod),
+                    headers={
+                        "Authorization": f"Bearer {TOKEN}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    verify=CACERT,
+                )
+                print(f"  - status = {r.status_code}, response = {r.text}")
+            except Exception as e:
+                print(f"Failed to create pod: {e}")
+
+
+    if __name__ == "__main__":
+        print("Starting HTCondor worker scaler")
+        print(
+            "Max workers per cycle: ", os.environ.get("HTCONDOR_MAX_WORKERS_PER_CYCLE", 3)
+        )
+        print("Max workers: ", os.environ.get("HTCONDOR_MAX_WORKERS", 10))
+        print("CPUs per worker: ", os.environ.get("HTCONDOR_CPUS_PER_WORKER", 1))
+        time.sleep(10)
+        label_selector = os.environ.get("HTCONDOR_LABEL_SELECTOR", "app=condor-worker")
+        pod_template = os.environ.get("HTCONDOR_POD_TEMPLATE", "/data/worker.json")
+        max_workers = int(os.environ.get("HTCONDOR_MAX_WORKERS", 10))
+        cpus_per_worker = int(os.environ.get("HTCONDOR_CPUS_PER_WORKER", 1))
+        max_workers_per_cycle = int(os.environ.get("HTCONDOR_MAX_WORKERS_PER_CYCLE", 3))
+        while True:
+            # Get number of CPUs needed
+            print("Getting needed CPUs")
+            needed_cpus = get_needed_cpus()
+
+            # Terminate idle pods
+            print("Terminating condor worker pods that are idle")
+            terminate_idle_pods(label_selector)
+
+            # Get numbers of running & pending pods
+            (num_pending_pods, num_running_pods) = get_num_pods(label_selector)
+
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print("Summary:")
+            print(
+                f"{current_time} - Pending: {num_pending_pods} - Running: {num_running_pods} - NeededCPUs={needed_cpus}"
+            )
+            print("Estimating number of workers to create")
+            # Estimate number of worker pods to create
+            num = math.ceil(needed_cpus / cpus_per_worker)
+
+            # Limit number of pods if necessary
+            if num > max_workers_per_cycle:
+                num = max_workers_per_cycle
+            if num_running_pods + num_pending_pods + num > max_workers:
+                num = max_workers - num_running_pods - num_pending_pods
+                if num < 0:
+                    num = 0
+            # If there are pending pods, don't create any more
+            if num_pending_pods > 0:
+                num = 0
+            # Create new pods if necessary
+            if num > 0:
+                create_pods(
+                    num,
+                    pod_template,
+                    os.environ.get("HTCONDOR_POD_NAME", "condor-worker"),
+                    label_selector,
+                )
+            time.sleep(60)

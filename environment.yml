@@ -1,0 +1,36 @@
+# environment.yml
+# Configuration file for creating a Conda Environment with dependencies needed for Tethys Platform.
+# Create the environment by running the following command (after installing Miniconda):
+#   $ conda env create -f environment.yml
+# Or using the conda-lock.yml that is generated from this file:
+# conda-lock -f environment.yml -p linux-64
+# conda-lock install --name <ENV_NAME> conda-lock.yml
+
+name: tethys
+
+channels:
+  - conda-forge
+  - tethysplatform
+  - defaults
+
+dependencies:
+  - python=3.10
+  - cxx-compiler
+  - django=4.2.*
+  - django-select2
+  - django-taggit<5
+  - coverage
+  - factory_boy
+  - filelock
+  - geojson
+  - jinja2
+  - pandas
+  - param
+  - pyshp
+  - requests
+  - setuptools
+  - sqlalchemy<2
+  - panel
+  - pdm
+  - plotly
+  - tethys_dataset_services>=2.4.1

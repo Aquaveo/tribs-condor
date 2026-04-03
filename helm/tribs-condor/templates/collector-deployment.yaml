@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: condor-collector
+  labels:
+    app.kubernetes.io/name: condor-collector
+    helm.sh/chart: {{ include "condor-manager.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: condor-collector
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: condor-collector
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- if .Values.collector.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.collector.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.collector.image.repository }}:{{ .Values.collector.image.tag }}"
+          imagePullPolicy: {{ .Values.collector.image.pullPolicy }}
+          env:
+            - name: _CONDOR_CONDOR_HOST
+              value: "condor-collector"
+            - name: _CONDOR_SEC_PASSWORD_FILE
+              value: "/etc/condor/pool_password/password"
+          ports:
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+            - name: condor
+              containerPort: 9618
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.collector.resources | nindent 12 }}
+          volumeMounts:
+            - name: pool-password
+              mountPath: /etc/condor/pool_password
+      volumes:
+        - name: pool-password
+          secret:
+            defaultMode: 0600
+            secretName: condor-pool-password
+      {{- with .Values.collector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.collector.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.collector.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

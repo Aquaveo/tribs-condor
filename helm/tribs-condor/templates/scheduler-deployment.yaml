@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: condor-scheduler
+  labels:
+    app.kubernetes.io/name: condor-scheduler
+    helm.sh/chart: {{ include "condor-manager.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: condor-scheduler
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: condor-scheduler
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      {{- if .Values.scheduler.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.scheduler.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      initContainers:
+      - name: write-condor-scheduler-name
+        image: bitnami/kubectl:latest
+        command: 
+          [
+            "sh", 
+            "-c", 
+            "kubectl create configmap condor-scheduler-name --from-literal=dedicated-scheduler.conf=DedicatedScheduler=\"$CONDOR_SCHEDULER_FQDN\" -o yaml --dry-run=client | kubectl -n $K8S_NAMESPACE apply -f -;"
+          ]
+        env:
+        - name: CONDOR_SCHEDULER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CONDOR_SCHEDULER_FQDN
+          value: "DedicatedScheduler@$(CONDOR_SCHEDULER_NAME)"
+
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.scheduler.image.repository }}:{{ .Values.scheduler.image.tag }}"
+          imagePullPolicy: {{ .Values.scheduler.image.pullPolicy }}
+          env:
+            - name: _CONDOR_CONDOR_HOST
+              value: "condor-collector"
+            - name: _CONDOR_SEC_PASSWORD_FILE
+              value: "/etc/condor/pool_password/password"
+            - name: CONDOR_SCHEDULER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CONDOR_SCHEDULER_FQDN
+              value: "DedicatedScheduler@$(CONDOR_SCHEDULER_NAME)"
+          ports:
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+            - name: condor
+              containerPort: 9618
+              protocol: TCP
+          # livenessProbe:
+          #   exec:
+          #     command:
+          #     - /usr/local/bin/htcondor-schedd-liveness
+          #   initialDelaySeconds: 10
+          #   periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            initialDelaySeconds: 15
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          volumeMounts:
+            - name: pool-password
+              mountPath: /var/lib/condor/pool_password
+            - name: condor-authorized-keys
+              readOnly: true
+              mountPath: /var/lib/condor/keys
+              
+      volumes:
+        - name: pool-password
+          secret:
+            defaultMode: 0600
+            secretName: condor-pool-password
+        - name: condor-authorized-keys
+          secret:
+            defaultMode: 0600
+            secretName: condor-authorized-keys
+      
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

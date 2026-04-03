@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: condor-scalecon
+  labels:
+    app.kubernetes.io/name: condor-scalecon
+    helm.sh/chart: {{ include "condor-manager.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: condor-scalecon
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: condor-scalecon
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/scalecon-configmap.yaml") . | sha256sum }}        
+    spec:
+      {{- if .Values.scalecon.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.scalecon.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: condor-scalecon
+          image: "{{ .Values.scalecon.image.repository }}:{{ .Values.scalecon.image.tag }}"
+          imagePullPolicy: {{ .Values.scalecon.image.pullPolicy }}
+          env:
+            - name: _CONDOR_CONDOR_HOST
+              value: "{{ .Values.scalecon.env._CONDOR_CONDOR_HOST.value }}"
+            - name: _CONDOR_SEC_PASSWORD_FILE
+              value: "{{ .Values.scalecon.env._CONDOR_SEC_PASSWORD_FILE.value }}"
+            - name: HTCONDOR_POD_TEMPLATE
+              value: "{{ .Values.scalecon.env.HTCONDOR_POD_TEMPLATE.value }}"
+            - name: HTCONDOR_MAX_WORKERS
+              value: "{{ .Values.scalecon.env.HTCONDOR_MAX_WORKERS.value }}"
+            - name: HTCONDOR_CPUS_PER_WORKER
+              value: "{{ .Values.worker.resources.limits.cpu }}"
+            - name: HTCONDOR_MAX_WORKERS_PER_CYCLE
+              value: "{{ .Values.scalecon.env.HTCONDOR_MAX_WORKERS_PER_CYCLE.value }}"
+            - name: HTCONDOR_POD_NAME
+              value: "{{ .Values.scalecon.env.HTCONDOR_POD_NAME.value }}"
+            - name: HTCONDOR_LABEL_SELECTOR
+              value: "{{ .Values.scalecon.env.HTCONDOR_LABEL_SELECTOR.value }}"
+          ports:
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+            - name: condor
+              containerPort: 9618
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.scalecon.resources | nindent 12 }}
+          volumeMounts:
+            - name: pool-password
+              mountPath: /etc/condor/pool_password
+            - name: worker-config
+              readOnly: true
+              mountPath: /data/worker.json
+              subPath: worker.json
+            - name: worker-config
+              mountPath: /apps/scalecon/main.py
+              subPath: main.py
+      volumes:
+        - name: pool-password
+          secret:
+            defaultMode: 0600
+            secretName: condor-pool-password
+        - name: worker-config
+          configMap:
+            name: condor-worker-json
+      {{- with .Values.scalecon.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scalecon.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scalecon.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
