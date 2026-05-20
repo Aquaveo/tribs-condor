@@ -22,7 +22,9 @@ dependencies:
   - coverage
   - factory_boy
   - filelock
+  - gdal
   - geojson
+  - libgdal
   - jinja2
   - pandas
   - param
