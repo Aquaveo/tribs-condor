@@ -93,21 +93,27 @@ jobs:
     name: Publish Helm Chart
     needs: [helm-check]
     # Only publish on direct push to main; skip on PRs.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # TODO: revert to main-only before merge
+    # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    env:
+      HELM_CHART: helm/tribs-condor
     steps:
       - uses: actions/checkout@v6
 
-      - name: Publish chart to ghcr.io/aquaveo
-        uses: bitdeps/helm-oci-charts-releaser@v0.1.4
-        with:
-          oci_registry: ghcr.io/aquaveo
-          oci_username: aquaveo
-          oci_password: ${{ secrets.GITHUB_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          charts_dir: helm
-          skip_existing: true   # don't overwrite a published version
-          skip_gh_release: true # commits fire often; don't spam Releases
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GH_TOKEN" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package chart
+        run: helm package "$HELM_CHART" --destination /tmp/helm-pkg
+
+      - name: Push to GHCR
+        run: helm push /tmp/helm-pkg/tribs-condor-*.tgz oci://ghcr.io/aquaveo
