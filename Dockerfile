@@ -12,6 +12,7 @@ ENV MAMBA_RELEASE_URL="https://github.com/mamba-org/micromamba-releases/releases
 ENV TETHYS_ENV_ROOT="${MAMBA_ROOT_PREFIX}/envs/tethys"
 ENV PROJ_LIB="${TETHYS_ENV_ROOT}/share/proj/"
 ENV _CONDOR_DESIGNATED_PROJECT="TRIBS"
+ENV AQUAPI_URL="https://aquapi.aquaveo.com/aquaveo/stable/"
 
 ################
 # SETUP PYTHON #
@@ -72,8 +73,9 @@ RUN ${TETHYS_ENV_ROOT}/bin/pip install 'shapely>=2.0.0'
 RUN /bin/bash -c "ln -s ${TETHYS_ENV_ROOT}/bin/python /opt/tethys-python"
 
 # Permissions
-RUN /bin/bash -c "echo 'prj = {}' > ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py && \
-    chmod a=wr ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py"
+RUN /bin/bash -c "echo 'prj = {}' > ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py ; \
+    chmod a=wr ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py ; \
+    chmod -R +x ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/xms/ # /xms/wbtools/whitebox_tools"
 
 RUN chmod +x $(/opt/tethys-python -c "from tribs_adapter.tribs import get_tribs_path; print(get_tribs_path())")
 
