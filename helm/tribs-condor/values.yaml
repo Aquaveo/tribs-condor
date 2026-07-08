@@ -19,8 +19,8 @@ secrets:
 scheduler:
   name: condor-scheduler
   image:
-    repository: your-registry.example.com/your-org/condor-scheduler  # TODO update to correct repo when published
-    tag: latest
+    repository: aquaveollc/tribs-condor
+    tag: v0.1.0
     pullPolicy: Always
   service:
     type: ClusterIP # You can change this to NodePort or LoadBalancer as needed
@@ -49,8 +49,8 @@ scheduler:
 
 collector:
   image:
-    repository: your-registry.example.com/your-org/condor-collector  # TODO update to correct repo when published
-    tag: latest
+    repository: aquaveollc/tribs-condor
+    tag: v0.1.0
     pullPolicy: Always
   imagePullSecrets:
   - name: github-registry
@@ -80,8 +80,8 @@ collector:
 
 scalecon:
   image:
-    repository: your-registry.example.com/your-org/condor-scalecon  # TODO update to correct repo when published
-    tag: latest
+    repository: aquaveollc/tribs-condor
+    tag: v0.1.0
     pullPolicy: Always
   imagePullSecrets:
   - name: github-registry
@@ -113,8 +113,8 @@ scalecon:
 
 worker:
   image:
-    repository: your-registry.example.com/your-org/tribs-condor  # TODO update to correct repo when published
-    tag: v0.0.42
+    repository: aquaveollc/tribs-condor
+    tag: v0.1.0
     pullPolicy: Always
   storageClass:
     enabled: false
