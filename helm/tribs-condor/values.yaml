@@ -49,7 +49,7 @@ scheduler:
 
 collector:
   image:
-    repository: your-registry.example.com/your-org/condor-collector  # TODO update to correct repo when published
+    repository: aquaveollc/tribs-condor
     tag: latest
     pullPolicy: Always
   imagePullSecrets:
@@ -113,7 +113,7 @@ scalecon:
 
 worker:
   image:
-    repository: your-registry.example.com/your-org/tribs-condor  # TODO update to correct repo when published
+    repository: aquaveollc/tribs-condor
     tag: v0.0.42
     pullPolicy: Always
   storageClass:
