@@ -46,3 +46,15 @@ Sessionx.vim
 tags
 # Persistent undo
 [._]*.un~
+
+# Helm
+helm/*/charts/
+helm/*/requirements.lock
+values-local.yaml
+values-staging.yaml
+values-production.yaml
+helm/*/*.lock
+helm/tribs-condor/*.tgz
+helm/tribs-condor/secrets.yaml.*
+helm/tribs-condor/secrets.yaml
+helm/tribs-condor/.sops.yaml
