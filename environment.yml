@@ -11,10 +11,9 @@ name: tethys
 channels:
   - conda-forge
   - tethysplatform
-  - defaults
 
 dependencies:
-  - python=3.10
+  - python=3.13
   - cxx-compiler
   - django=4.2.*
   - django-select2
