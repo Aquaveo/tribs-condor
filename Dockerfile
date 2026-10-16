@@ -39,7 +39,7 @@ RUN mkdir -p ${CONDOR_HOME}/.config/pip && echo "[global]\nquiet = True" > ${CON
 
 # Add conda-forge as the default channel and create the environment
 ADD conda-lock.yml /tmp/conda-lock.yml
-RUN ${MAMBA_EXE} create -n "${CONDA_ENV_NAME}" "python<3.11" \
+RUN ${MAMBA_EXE} create -n "${CONDA_ENV_NAME}" "python=3.13" \
     && ${MAMBA_EXE} install -y -n "${CONDA_ENV_NAME}" -f /tmp/conda-lock.yml \
     && ${MAMBA_EXE} clean -a -y
 
@@ -72,8 +72,8 @@ RUN ${TETHYS_ENV_ROOT}/bin/pip install 'shapely>=2.0.0'
 RUN /bin/bash -c "ln -s ${TETHYS_ENV_ROOT}/bin/python /opt/tethys-python"
 
 # Permissions
-RUN /bin/bash -c "echo 'prj = {}' > ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py && \
-    chmod a=wr ${TETHYS_ENV_ROOT}/lib/python3.10/site-packages/epsgref.py"
+RUN /bin/bash -c "echo 'prj = {}' > ${TETHYS_ENV_ROOT}/lib/python3.13/site-packages/epsgref.py && \
+    chmod a=wr ${TETHYS_ENV_ROOT}/lib/python3.13/site-packages/epsgref.py"
 
 RUN chmod +x $(/opt/tethys-python -c "from tribs_adapter.tribs import get_tribs_path; print(get_tribs_path())")
 
